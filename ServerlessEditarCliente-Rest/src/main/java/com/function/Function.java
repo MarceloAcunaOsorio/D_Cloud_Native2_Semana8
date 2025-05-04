@@ -12,6 +12,11 @@ import java.util.Optional;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
+import com.azure.core.credential.AzureKeyCredential;
+import com.azure.core.util.BinaryData;
+import com.azure.messaging.eventgrid.EventGridEvent;
+import com.azure.messaging.eventgrid.EventGridPublisherClient;
+import com.azure.messaging.eventgrid.EventGridPublisherClientBuilder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.microsoft.azure.functions.ExecutionContext;
 import com.microsoft.azure.functions.HttpMethod;
@@ -26,13 +31,17 @@ import com.microsoft.azure.functions.annotation.HttpTrigger;
  * Azure Function para actualizar datos de empleados
  */
 public class Function {
-    private String BACKEND_URL;
-    private String SERVERLESS_SECRET_KEY;
+    private final String BACKEND_URL;
+    private final String SERVERLESS_SECRET_KEY;
+    private final String EVENTGRID_ENDPOINT;
+    private final String EVENTGRID_KEY;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public Function() {
         this.BACKEND_URL = System.getenv("BACKEND_URL");
         this.SERVERLESS_SECRET_KEY = System.getenv("SERVERLESS_SECRET_KEY");
+        this.EVENTGRID_ENDPOINT = System.getenv("EVENTGRID_ENDPOINT");
+        this.EVENTGRID_KEY = System.getenv("EVENTGRID_KEY");
     }
 
     /**
@@ -113,6 +122,12 @@ public class Function {
             context.getLogger().info("Respuesta del backend: " + response.statusCode());
             context.getLogger().info("Cuerpo de la respuesta: " + response.body());
 
+
+            // 2. Publicar evento solo si la actualización fue exitosa
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                publishEmployeeUpdatedEvent(employeeData, context);
+            }
+
             // Procesar respuesta
             return request.createResponseBuilder(HttpStatus.valueOf(response.statusCode()))
                 .header("Content-Type", "application/json")
@@ -142,6 +157,33 @@ public class Function {
             return Base64.getEncoder().encodeToString(hmacData);
         } catch (Exception e) {
             throw new RuntimeException("Error al generar la firma: " + e.getMessage());
+        }
+    }
+
+
+
+     /**
+     * Publica un evento en Event Grid cuando se actualiza un empleado.
+     */
+    private void publishEmployeeUpdatedEvent(Map<String, Object> employeeData, ExecutionContext context) {
+        try {
+            EventGridPublisherClient<EventGridEvent> client = new EventGridPublisherClientBuilder()
+                .endpoint(EVENTGRID_ENDPOINT)
+                .credential(new AzureKeyCredential(EVENTGRID_KEY))
+                .buildEventGridEventPublisherClient();
+
+            EventGridEvent event = new EventGridEvent(
+                "/employees/update", // Source (origen del evento)
+                "Employee.Updated",   // Tipo de evento (customizable)
+                BinaryData.fromObject(employeeData), // Datos del empleado
+                "1.0"                // Versión del esquema
+            );
+
+            client.sendEvent(event);
+            context.getLogger().info("Evento Employee.Updated publicado en Event Grid");
+
+        } catch (Exception e) {
+            context.getLogger().warning("Error al publicar evento: " + e.getMessage());
         }
     }
 }
