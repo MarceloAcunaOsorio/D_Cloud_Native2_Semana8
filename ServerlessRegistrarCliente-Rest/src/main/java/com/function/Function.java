@@ -6,13 +6,17 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.Base64;
+import java.util.List;
+import java.util.UUID;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.microsoft.azure.functions.ExecutionContext;
 import com.microsoft.azure.functions.HttpMethod;
 import com.microsoft.azure.functions.HttpRequestMessage;
@@ -22,7 +26,7 @@ import com.microsoft.azure.functions.annotation.AuthorizationLevel;
 import com.microsoft.azure.functions.annotation.FunctionName;
 import com.microsoft.azure.functions.annotation.HttpTrigger;
 
-/**
+/*
  * Azure Function para procesar el registro de clientes.
  * Recibe datos de registro, valida y envía al backend con autenticación.
  */
@@ -36,17 +40,28 @@ public class Function {
     private final ObjectMapper objectMapper;
     private final String backendUrl;
     private final String secretKey;
+    private final String eventGridTopicEndpoint;
+    private final String eventGridTopicKey;
+
 
     // Constructor: inicializa y valida configuración
     public Function() {
         this.backendUrl = System.getenv("BACKEND_URL");
         this.secretKey = System.getenv("SERVERLESS_SECRET_KEY");
+        this.eventGridTopicEndpoint = System.getenv("EVENTGRID_ENDPOINT");
+        this.eventGridTopicKey = System.getenv("EVENTGRID_KEY");
 
         if (this.backendUrl == null || this.backendUrl.trim().isEmpty()) {
             throw new IllegalStateException("BACKEND_URL no está configurada");
         }
         if (this.secretKey == null || this.secretKey.trim().isEmpty()) {
             throw new IllegalStateException("SERVERLESS_SECRET_KEY no está configurada");
+        }
+        if (this.eventGridTopicEndpoint == null || this.eventGridTopicEndpoint.trim().isEmpty()) {
+            throw new IllegalStateException("EVENTGRID_ENDPOINT no está configurado");
+        }
+        if (this.eventGridTopicKey == null || this.eventGridTopicKey.trim().isEmpty()) {
+            throw new IllegalStateException("EVENTGRID_KEY no está configurado");
         }
 
         this.httpClient = HttpClient.newBuilder()
@@ -225,6 +240,38 @@ public class Function {
             }
 
             context.getLogger().info("Registro procesado con código de estado: " + statusCode);
+
+
+
+             // Publicar evento en Event Grid si el registro fue exitoso
+            if (statusCode == 200) {
+                context.getLogger().info("Registro exitoso. Publicando evento en Event Grid");
+
+                ObjectNode event = objectMapper.createObjectNode();
+                event.put("id", UUID.randomUUID().toString());
+                event.put("eventType", "ClienteRegistrado");
+                event.put("subject", "usuarios/cliente/nuevo");
+                event.put("eventTime", OffsetDateTime.now().toString());
+                event.put("dataVersion", "1.0");
+                JsonNode userData = objectMapper.readTree(requestBody);
+                event.set("data", userData);
+
+                String eventJson = objectMapper.writeValueAsString(List.of(event));
+
+                HttpRequest eventRequest = HttpRequest.newBuilder()
+                        .uri(URI.create(eventGridTopicEndpoint))
+                        .header("aeg-sas-key", eventGridTopicKey)
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(eventJson))
+                        .build();
+
+                HttpResponse<String> eventResponse = httpClient.send(
+                        eventRequest, HttpResponse.BodyHandlers.ofString());
+
+                context.getLogger().info("Event Grid status: " + eventResponse.statusCode());
+            }
+
+
             return request.createResponseBuilder(HttpStatus.valueOf(statusCode))
                 .body(responseBody)
                 .build();

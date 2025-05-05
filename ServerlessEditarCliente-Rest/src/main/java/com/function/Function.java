@@ -104,7 +104,7 @@ public class Function {
 
             // Construir URL completa
             String fullUrl = BACKEND_URL + (BACKEND_URL.endsWith("/") ? "" : "/") + "api/update/employee";
-            context.getLogger().info("URL del backend: " + fullUrl);
+            context.getLogger().info(String.format("URL del backend: %s", fullUrl));
 
             // Preparar petición HTTP
             HttpRequest httpRequest = HttpRequest.newBuilder()
@@ -120,7 +120,7 @@ public class Function {
                 .send(httpRequest, HttpResponse.BodyHandlers.ofString());
 
             context.getLogger().info("Respuesta del backend: " + response.statusCode());
-            context.getLogger().info("Cuerpo de la respuesta: " + response.body());
+            context.getLogger().info("Cuerpo de la respuesta: " +response.body());
 
 
             // 2. Publicar evento solo si la actualización fue exitosa
@@ -135,7 +135,7 @@ public class Function {
                 .build();
 
         } catch (Exception e) {
-            context.getLogger().severe("Error: " + e.getMessage());
+            context.getLogger().severe(String.format("Error: %s",e.getMessage()));
             return request.createResponseBuilder(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body("{\"error\": \"Error al procesar la solicitud: " + e.getMessage() + "\"}")
                 .build();
